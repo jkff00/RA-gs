@@ -1,28 +1,18 @@
 import os
 import torch
 from random import randint
-import sys
 import open3d as o3d
 import numpy as np
 import math
-from utils.general_utils import safe_state
-import uuid
+
 from tqdm import tqdm
 from plyfile import PlyData, PlyElement
-from argparse import ArgumentParser, Namespace
-from arguments import ModelParams, PipelineParams, OptimizationParams
 import matplotlib.pyplot as plt
-try:
-    from torch.utils.tensorboard import SummaryWriter
-    TENSORBOARD_FOUND = True
-except ImportError:
-    TENSORBOARD_FOUND = False
 #无深度
 # from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from diff_gauss import GaussianRasterizationSettings, GaussianRasterizer
 from utils.graphics_utils import getProjectionMatrix
 from scene.dataset_readers import qvec2rotmat
-from simple_knn._C import distCUDA2
 import cv2
 import json
 from tqdm import tqdm
@@ -71,6 +61,25 @@ class PointState:
 
         # --- 距离统计 ---
         self.min_dists = torch.full((num_points,), float("inf"), device=device,dtype=torch.float16)
+    
+    def add_new_points(self, new_num_points: int):
+        """
+        添加新点并扩展所有相关属性
+        Args:
+            new_num_points: 新增点的数量
+        """
+        # 扩展 counts, color_mean, color_M2, keys_exist 等属性
+        self.counts = torch.cat([self.counts, torch.zeros(new_num_points, dtype=torch.int16, device=self.device)])
+        self.color_mean = torch.cat([self.color_mean, torch.zeros(new_num_points, self.C, device=self.device, dtype=torch.float16)])
+        self.color_M2 = torch.cat([self.color_M2, torch.zeros(new_num_points, self.C, self.C, device=self.device, dtype=torch.float16)])
+        
+        # 扩展角度相关统计信息
+        self.keys_exist = torch.cat([self.keys_exist, torch.full((new_num_points, self.capacity), -1, dtype=torch.int32, device=self.device)], dim=0)
+        self.write_ptr = torch.cat([self.write_ptr, torch.zeros(new_num_points, dtype=torch.long, device=self.device)], dim=0)
+        
+        # 扩展距离统计
+        self.min_dists = torch.cat([self.min_dists, torch.full((new_num_points,), float("inf"), device=self.device, dtype=torch.float16)], dim=0)
+
 # ============角度存量的更新===================#
     def angle_res_to_scale(self,angle_res_deg: float):
         """
